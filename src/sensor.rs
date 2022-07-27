@@ -1,7 +1,7 @@
 use std::{
     sync::{
         mpsc::{channel, Receiver, Sender, TryRecvError},
-        Arc, Condvar, Mutex, MutexGuard,
+        Arc, Barrier, Condvar, Mutex, MutexGuard,
     },
     thread::{sleep, spawn, JoinHandle},
     time::{Duration, Instant},
@@ -11,11 +11,10 @@ use glam::{EulerRot::XYZ, Quat, Vec3A};
 use linux_embedded_hal::I2cdev;
 use mpu6050::Mpu6050;
 
-//##################
-//add barrier to sensor, so that sensors can be synced
-//##################
-
 // i hope all this works
+
+// the sensors need a method communication to send shutdown signals or stop them from running when not in use
+// it is currently not an issue so will do later
 
 const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
 
@@ -23,15 +22,22 @@ pub struct Sensor {
     device: Mpu6050<I2cdev>,
     output: Sender<Quat>,
     notifier: Receiver<()>,
+    barrier: Arc<Barrier>,
     rotation: Vec3A,
 }
 
 impl Sensor {
-    pub fn new(device: Mpu6050<I2cdev>, output: Sender<Quat>, notifier: Receiver<()>) -> Self {
+    pub fn new(
+        device: Mpu6050<I2cdev>,
+        output: Sender<Quat>,
+        notifier: Receiver<()>,
+        barrier: Arc<Barrier>,
+    ) -> Self {
         Self {
             device,
             output,
             notifier,
+            barrier,
             rotation: DEFAULT_SENSOR_ROTATION,
         }
     }
@@ -51,6 +57,10 @@ impl Sensor {
                 self.output
                     .send(Quat::from_euler(XYZ, rot.x, rot.y, rot.z))
                     .expect(todo!());
+
+                // wait for all sensor threads to synchronise
+                // this call should block for a short period of time
+                self.barrier.wait();
             }
 
             delta = timer.elapsed().as_secs_f32();
@@ -62,6 +72,7 @@ pub struct SensorArray<const N: usize> {
     sensors: [JoinHandle<()>; N],
     outputs: [Receiver<Quat>; N],
     notifiers: [Sender<()>; N],
+    barrier: Arc<Barrier>,
 }
 
 impl<const N: usize> SensorArray<N> {
@@ -73,6 +84,9 @@ impl<const N: usize> SensorArray<N> {
         let mut notifiers: [Sender<()>; N] = unsafe { std::mem::zeroed() };
 
         let mut tmp: [(Sender<Quat>, Receiver<()>); N] = unsafe { std::mem::zeroed() };
+
+        // create barrier
+        let barrier = Arc::new(Barrier::new(N + 1));
 
         // generate channels
         for i in 0..N {
@@ -88,23 +102,31 @@ impl<const N: usize> SensorArray<N> {
         let devices = devices
             .into_iter()
             .zip(tmp.into_iter())
-            .map(|(device, (output, notifier))| Sensor::new(device, output, notifier))
+            .map(|(device, (output, notifier))| {
+                Sensor::new(device, output, notifier, barrier.clone())
+            })
             .enumerate();
 
         // start sensors
         for (i, sensor) in devices {
-            sensors[i] = std::thread::spawn(move || sensor.main())
+            // this unwrap call should never panic as the name should never contain null bytes
+            sensors[i] = std::thread::Builder::new()
+                .name(format!("sensor {}", i))
+                .spawn(move || sensor.main())
+                .unwrap()
         }
 
         Self {
             sensors,
             outputs,
             notifiers,
+            barrier,
         }
     }
 
-    // reads the sensors and returns there quaterion rotations
+    // reads the sensors and returns their quaterion rotations
     pub fn read(&self) -> Box<[Quat; N]> {
+        // doesnt matter whats in the array as it will be overwritten
         let mut tmp = Box::new([Quat::IDENTITY; N]);
 
         for notifier in &self.notifiers {
@@ -115,7 +137,9 @@ impl<const N: usize> SensorArray<N> {
             tmp[i] = output.recv().expect(todo!());
         }
 
-        // use barrier to ensure all sensors begin updating again at the same time.
+        // synchronise all threads before continuing execution
+        // this call should not block
+        self.barrier.wait();
 
         tmp
     }
