@@ -125,22 +125,17 @@ impl<const N: usize> SensorArray<N> {
     }
 
     // reads the sensors and returns their quaterion rotations
-    pub fn read(&self) -> Box<[Quat; N]> {
-        // doesnt matter whats in the array as it will be overwritten
-        let mut tmp = Box::new([Quat::IDENTITY; N]);
-
+    pub fn read(&self, dest: &mut [Quat; N]) {
         for notifier in &self.notifiers {
             notifier.send(()).expect(todo!());
         }
 
         for (i, output) in self.outputs.iter().enumerate() {
-            tmp[i] = output.recv().expect(todo!());
+            dest[i] = output.recv().expect(todo!());
         }
 
         // synchronise all threads before continuing execution
         // this call should not block
         self.barrier.wait();
-
-        tmp
     }
 }
