@@ -32,9 +32,11 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
     }
 
     pub fn main(mut self) -> Result<(), Box<dyn Error>> {
+        // clone references pass to the connection listner closure
         let unhandled_connections = self.unhandled_connections.clone();
         let connection_listner = self.connection_listner.clone();
 
+        // create connection listner and start listning for connections
         let connection_listner = std::thread::Builder::new()
             .name("efbt connection listner".into())
             .spawn(move || Self::connection_listner(unhandled_connections, connection_listner))?;
@@ -49,6 +51,8 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             for connection in self.unhandled_connections.write().unwrap().drain(..) {
                 let addr = connection.peer_addr().unwrap();
                 let stream = Stream::new(connection, sensor_data.clone());
+
+                // start stream
                 self.streams.push(
                     std::thread::Builder::new()
                         .name(format!("stream on {}", addr))
@@ -56,8 +60,11 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
                 );
             }
 
+            // reading sensors and storing result for later so that all streams do not need to poll sensor
             self.sensor_array.read(&mut **sensor_data.write().unwrap());
 
+            // unpark threads so that streams will send sensor data to the connected server
+            // the streams are really here so that data can be send on each connection in "parrallel" as it should be a bit faster
             for stream in &self.streams {
                 stream.thread().unpark();
             }
