@@ -1,4 +1,5 @@
 use std::{
+    error::Error,
     sync::{
         mpsc::{channel, Receiver, Sender, TryRecvError},
         Arc, Barrier, Condvar, Mutex, MutexGuard,
@@ -9,7 +10,27 @@ use std::{
 
 use glam::{EulerRot::XYZ, Quat, Vec3A};
 use linux_embedded_hal::I2cdev;
-use mpu6050::Mpu6050;
+use mpu6050::{Mpu6050, Mpu6050Builder};
+
+use crate::config::Device;
+
+pub trait FromDevice {
+    fn from_device(device: Device) -> Result<Self, Box<dyn Error>>
+    where
+        Self: Sized;
+}
+
+impl FromDevice for Mpu6050<I2cdev> {
+    fn from_device(device: Device) -> Result<Self, Box<dyn Error>>
+    where
+        Self: Sized,
+    {
+        Ok(Mpu6050Builder::new()
+            .i2c(I2cdev::new(format!("/dev/i2c-{}", device.bus))?)
+            .slave_addr(device.addr)
+            .build()?)
+    }
+}
 
 // i hope all this works
 

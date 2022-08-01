@@ -3,6 +3,8 @@
 use std::{
     collections::VecDeque,
     error::Error,
+    fmt::Display,
+    net::SocketAddr,
     sync::{Arc, Mutex, RwLock},
     thread::JoinHandle,
 };
@@ -10,7 +12,30 @@ use std::{
 use ecore::connection::Connection;
 use glam::Quat;
 
-use crate::{connection_listner::ConnectionListner, sensor::SensorArray};
+use crate::{
+    config::{Config, ConfigError},
+    connection_listner::ConnectionListner,
+    sensor::SensorArray,
+};
+
+#[derive(Debug)]
+pub enum StreamerError {
+    ConfigInvalid(ConfigError),
+}
+
+impl Display for StreamerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let tmp;
+        f.write_str(match self {
+            StreamerError::ConfigInvalid(config_error) => {
+                tmp = format!("config error: {}", config_error);
+                &tmp
+            }
+        })
+    }
+}
+
+impl Error for StreamerError {}
 
 pub struct Streamer<const SENSOR_COUNT: usize> {
     sensor_array: SensorArray<SENSOR_COUNT>,
@@ -22,10 +47,33 @@ pub struct Streamer<const SENSOR_COUNT: usize> {
 impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
     pub fn init() -> Result<Self, Box<dyn Error>> {
         // read ~/.config/efbt/config.toml
+        // zeroed mem is just a place holder
+        let config: Config = todo!();
+
+        // attempt to create a connection listner from the port and ip address in the config
+        // this will only bind one connection listner due to iterators lazziness
+        let connection_listner = config
+            .ip_addresses
+            .iter()
+            .map(|ip| SocketAddr::new(*ip, config.port))
+            .map(|socket| ConnectionListner::bind(socket))
+            .filter_map(|listner| match listner {
+                Ok(listner) => Some(listner),
+                Err(_) => None,
+            })
+            .nth(0);
+
+        // return error if no connection_listner could be bound
+        let connection_listner = match connection_listner {
+            Some(listner) => listner,
+            None => Err(StreamerError::ConfigInvalid(
+                ConfigError::NoValidSocketAddrs,
+            ))?,
+        };
 
         Ok(Self {
             sensor_array: todo!(),
-            connection_listner: todo!(),
+            connection_listner: Arc::new(Mutex::new(connection_listner)),
             streams: todo!(),
             unhandled_connections: todo!(),
         })
@@ -49,7 +97,7 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             }
 
             for connection in self.unhandled_connections.write().unwrap().drain(..) {
-                let addr = connection.peer_addr().unwrap();
+                let addr = connection.peer_addr()?;
                 let stream = Stream::new(connection, sensor_data.clone());
 
                 // start stream
@@ -70,7 +118,7 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             }
         }
 
-        todo!()
+        Ok(())
     }
 
     pub fn connection_listner(

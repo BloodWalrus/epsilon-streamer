@@ -2,6 +2,7 @@ use std::error::Error;
 
 use streamer::Streamer;
 
+mod config;
 mod connection_listner;
 mod sensor;
 mod streamer;
