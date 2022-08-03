@@ -20,7 +20,7 @@ use crate::{
     sensor::{FromDevice, SensorArray},
 };
 
-const DEFAULT_CONFIG_PATH: &str = "~/.config/efbt/streamer/config.toml";
+const DEFAULT_CONFIG_PATH: &str = "./config.toml";
 
 #[derive(Debug)]
 pub enum StreamerError {
