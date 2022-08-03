@@ -11,12 +11,16 @@ use std::{
 
 use ecore::connection::Connection;
 use glam::Quat;
+use linux_embedded_hal::I2cdev;
+use mpu6050::Mpu6050;
 
 use crate::{
     config::{Config, ConfigError},
     connection_listner::ConnectionListner,
-    sensor::SensorArray,
+    sensor::{FromDevice, SensorArray},
 };
+
+const DEFAULT_CONFIG_PATH: &str = "~/.config/efbt/streamer/config.toml";
 
 #[derive(Debug)]
 pub enum StreamerError {
@@ -40,15 +44,34 @@ impl Error for StreamerError {}
 pub struct Streamer<const SENSOR_COUNT: usize> {
     sensor_array: SensorArray<SENSOR_COUNT>,
     connection_listner: Arc<Mutex<ConnectionListner<SENSOR_COUNT, Quat>>>,
-    unhandled_connections: Arc<RwLock<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
+    unhandled_connections: Arc<Mutex<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
     streams: Vec<JoinHandle<()>>,
 }
 
 impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
     pub fn init() -> Result<Self, Box<dyn Error>> {
-        // read ~/.config/efbt/config.toml
-        // zeroed mem is just a place holder
-        let config: Config = todo!();
+        // load config path from ESTREAMER_CONFIG if it exsists. if not make it ~/.config/efbt/streamer/config.toml
+        let tmp;
+        let path = if let Ok(path) = std::env::var("ESTREAMER_CONFIG") {
+            tmp = path;
+            &tmp
+        } else {
+            DEFAULT_CONFIG_PATH
+        };
+
+        // load bytes from config
+        let config = std::fs::read(path)?;
+        // parse config
+        let config: Config = toml::from_slice(&config)?;
+
+        // check the config device count is correct
+        if config.devices.len() != SENSOR_COUNT {
+            if config.devices.len() > SENSOR_COUNT {
+                Err(StreamerError::ConfigInvalid(ConfigError::TooManyDevices))?
+            } else {
+                Err(StreamerError::ConfigInvalid(ConfigError::NotEnoughDevices))?
+            }
+        }
 
         // attempt to create a connection listner from the port and ip address in the config
         // this will only bind one connection listner due to iterators lazziness
@@ -71,11 +94,23 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             ))?,
         };
 
+        let mut devices: [Mpu6050<I2cdev>; SENSOR_COUNT] = unsafe { std::mem::zeroed() };
+        for (i, device) in config
+            .devices
+            .into_iter()
+            .map(|device| FromDevice::from_device(device))
+            .enumerate()
+        {
+            devices[i] = device?;
+        }
+
+        let sensor_array = SensorArray::new(devices);
+
         Ok(Self {
-            sensor_array: todo!(),
+            sensor_array,
             connection_listner: Arc::new(Mutex::new(connection_listner)),
-            streams: todo!(),
-            unhandled_connections: todo!(),
+            streams: Vec::new(),
+            unhandled_connections: Arc::new(Mutex::new(VecDeque::new())),
         })
     }
 
@@ -96,7 +131,7 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
                 break;
             }
 
-            for connection in self.unhandled_connections.write().unwrap().drain(..) {
+            for connection in self.unhandled_connections.lock().unwrap().drain(..) {
                 let addr = connection.peer_addr()?;
                 let stream = Stream::new(connection, sensor_data.clone());
 
@@ -122,7 +157,7 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
     }
 
     pub fn connection_listner(
-        unhandled_connections: Arc<RwLock<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
+        unhandled_connections: Arc<Mutex<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
         connection_listner: Arc<Mutex<ConnectionListner<SENSOR_COUNT, Quat>>>,
     ) {
         for connection in connection_listner
@@ -130,7 +165,7 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             .expect("mutex poisoned")
             .incomming()
         {
-            unhandled_connections.write().unwrap().push_back(connection)
+            unhandled_connections.lock().unwrap().push_back(connection)
         }
     }
 }

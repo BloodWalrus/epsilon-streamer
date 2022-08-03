@@ -10,3 +10,5 @@ ecore = { git = "https://github.com/BloodWalrus/epsilon-core" }
 mpu6050 = { git = "https://github.com/BloodWalrus/mpu6050improved" }
 glam = "0.21.2"
 linux-embedded-hal = "0.3.2"
+toml = "0.5.9"
+serde = { version = "1.0.142", features = ["derive"] }
