@@ -153,6 +153,8 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             }
         }
 
+        connection_listner.join();
+
         Ok(())
     }
 
