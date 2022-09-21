@@ -1,11 +1,12 @@
 use std::{
     error::Error,
+    marker::PhantomData,
     sync::{
-        mpsc::{channel, Receiver, Sender, TryRecvError},
-        Arc, Barrier, Condvar, Mutex, MutexGuard,
+        mpsc::{channel, Receiver, Sender},
+        Arc, Barrier,
     },
-    thread::{sleep, spawn, JoinHandle},
-    time::{Duration, Instant},
+    thread::JoinHandle,
+    time::Instant,
 };
 
 use glam::{EulerRot::XYZ, Quat, Vec3A};
@@ -37,24 +38,32 @@ impl FromDevice for Mpu6050<I2cdev> {
     }
 }
 
-// i hope all this works
+pub trait Gyro: FromDevice + Send {
+    fn get_gyro(&mut self) -> Result<Vec3A, Box<dyn Error>>;
+}
+
+impl Gyro for Mpu6050<I2cdev> {
+    fn get_gyro(&mut self) -> Result<Vec3A, Box<dyn Error>> {
+        Ok(self.get_gyro()?)
+    }
+}
 
 // the sensors need a method communication to send shutdown signals or stop them from running when not in use
 // it is currently not an issue so will do later
 
 const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
 
-pub struct Sensor {
-    device: Mpu6050<I2cdev>,
+pub struct Sensor<GYRO: Gyro> {
+    device: GYRO,
     output: Sender<Quat>,
     notifier: Receiver<()>,
     barrier: Arc<Barrier>,
     rotation: Vec3A,
 }
 
-impl Sensor {
+impl<GYRO: Gyro> Sensor<GYRO> {
     pub fn new(
-        device: Mpu6050<I2cdev>,
+        device: GYRO,
         output: Sender<Quat>,
         notifier: Receiver<()>,
         barrier: Arc<Barrier>,
@@ -94,15 +103,16 @@ impl Sensor {
     }
 }
 
-pub struct SensorArray<const N: usize> {
+pub struct SensorArray<const N: usize, GYRO: Gyro> {
     sensors: [JoinHandle<()>; N],
     outputs: [Receiver<Quat>; N],
     notifiers: [Sender<()>; N],
     barrier: Arc<Barrier>,
+    _marker: PhantomData<GYRO>,
 }
 
-impl<const N: usize> SensorArray<N> {
-    pub fn new(devices: [Mpu6050<I2cdev>; N]) -> Self {
+impl<const N: usize, GYRO: Gyro + 'static> SensorArray<N, GYRO> {
+    pub fn new(devices: [GYRO; N]) -> Self {
         // create empty arrays
         let mut sensors: [JoinHandle<()>; N] = unsafe { std::mem::zeroed() };
 
@@ -174,6 +184,7 @@ impl<const N: usize> SensorArray<N> {
             outputs,
             notifiers,
             barrier,
+            _marker: PhantomData,
         }
     }
 

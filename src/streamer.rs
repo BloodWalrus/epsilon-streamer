@@ -17,10 +17,10 @@ use mpu6050::Mpu6050;
 use crate::{
     config::{Config, ConfigError},
     connection_listner::ConnectionListner,
-    sensor::{FromDevice, SensorArray},
+    sensor::{FromDevice, Gyro, SensorArray},
 };
 
-const DEFAULT_CONFIG_PATH: &str = "./config.toml";
+const CONFIG_PATH: &str = "./config.toml";
 
 #[derive(Debug)]
 pub enum StreamerError {
@@ -41,26 +41,17 @@ impl Display for StreamerError {
 
 impl Error for StreamerError {}
 
-pub struct Streamer<const SENSOR_COUNT: usize> {
-    sensor_array: SensorArray<SENSOR_COUNT>,
+pub struct Streamer<const SENSOR_COUNT: usize, GYRO: Gyro> {
+    sensor_array: SensorArray<SENSOR_COUNT, GYRO>,
     connection_listner: Arc<Mutex<ConnectionListner<SENSOR_COUNT, Quat>>>,
     unhandled_connections: Arc<Mutex<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
     streams: Vec<JoinHandle<()>>,
 }
 
-impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
-    pub fn init() -> Result<Self, Box<dyn Error>> {
-        // load config path from ESTREAMER_CONFIG if it exsists. if not make it ~/.config/efbt/streamer/config.toml
-        let tmp;
-        let path = if let Ok(path) = std::env::var("ESTREAMER_CONFIG") {
-            tmp = path;
-            &tmp
-        } else {
-            DEFAULT_CONFIG_PATH
-        };
-
+impl<const SENSOR_COUNT: usize, GYRO: Gyro + 'static> Streamer<SENSOR_COUNT, GYRO> {
+    pub fn new() -> Result<Self, Box<dyn Error>> {
         // load bytes from config
-        let config = std::fs::read(path)?;
+        let config = std::fs::read(CONFIG_PATH)?;
         // parse config
         let config: Config = toml::from_slice(&config)?;
 
@@ -94,11 +85,11 @@ impl<const SENSOR_COUNT: usize> Streamer<SENSOR_COUNT> {
             ))?,
         };
 
-        let mut devices: [Mpu6050<I2cdev>; SENSOR_COUNT] = unsafe { std::mem::zeroed() };
+        let mut devices: [GYRO; SENSOR_COUNT] = unsafe { std::mem::zeroed() };
         for (i, device) in config
             .devices
             .into_iter()
-            .map(|device| FromDevice::from_device(device))
+            .map(|device| GYRO::from_device(device))
             .enumerate()
         {
             devices[i] = device?;
@@ -194,14 +185,17 @@ impl<const SENSOR_COUNT: usize> Stream<SENSOR_COUNT> {
         loop {
             std::thread::park();
 
-            self.connection
-                .send(
-                    &**self
-                        .sensor_data
-                        .read()
-                        .expect("rwlock on stream thread failed"),
-                )
-                .expect("failed to send frame");
+            let result = self.connection.send(
+                &**self
+                    .sensor_data
+                    .read()
+                    .expect("rwlock on stream thread failed"),
+            );
+
+            if let Err(_) = result {
+                break;
+            }
+            // .expect("failed to send frame");
         }
     }
 }
