@@ -15,6 +15,8 @@ use mpu6050::{Mpu6050, Mpu6050Builder};
 
 use crate::config::Device;
 
+use crate::GYRO;
+
 pub trait FromDevice {
     fn from_device(device: Device) -> Result<Self, Box<dyn Error>>
     where
@@ -53,7 +55,7 @@ impl Gyro for Mpu6050<I2cdev> {
 
 const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
 
-pub struct Sensor<GYRO: Gyro> {
+pub struct Sensor {
     device: GYRO,
     output: Sender<Quat>,
     notifier: Receiver<()>,
@@ -61,7 +63,7 @@ pub struct Sensor<GYRO: Gyro> {
     rotation: Vec3A,
 }
 
-impl<GYRO: Gyro> Sensor<GYRO> {
+impl Sensor {
     pub fn new(
         device: GYRO,
         output: Sender<Quat>,
@@ -103,7 +105,7 @@ impl<GYRO: Gyro> Sensor<GYRO> {
     }
 }
 
-pub struct SensorArray<const N: usize, GYRO: Gyro> {
+pub struct SensorArray<const N: usize> {
     sensors: [JoinHandle<()>; N],
     outputs: [Receiver<Quat>; N],
     notifiers: [Sender<()>; N],
@@ -111,7 +113,7 @@ pub struct SensorArray<const N: usize, GYRO: Gyro> {
     _marker: PhantomData<GYRO>,
 }
 
-impl<const N: usize, GYRO: Gyro + 'static> SensorArray<N, GYRO> {
+impl<const N: usize> SensorArray<N> {
     pub fn new(devices: [GYRO; N]) -> Self {
         // create empty arrays
         let mut sensors: [JoinHandle<()>; N] = unsafe { std::mem::zeroed() };

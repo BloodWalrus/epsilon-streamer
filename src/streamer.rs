@@ -18,6 +18,7 @@ use crate::{
     config::{Config, ConfigError},
     connection_listner::ConnectionListner,
     sensor::{FromDevice, Gyro, SensorArray},
+    GYRO, SENSOR_COUNT,
 };
 
 const CONFIG_PATH: &str = "./config.toml";
@@ -41,14 +42,14 @@ impl Display for StreamerError {
 
 impl Error for StreamerError {}
 
-pub struct Streamer<const SENSOR_COUNT: usize, GYRO: Gyro> {
-    sensor_array: SensorArray<SENSOR_COUNT, GYRO>,
+pub struct Streamer {
+    sensor_array: SensorArray<SENSOR_COUNT>,
     connection_listner: Arc<Mutex<ConnectionListner<SENSOR_COUNT, Quat>>>,
     unhandled_connections: Arc<Mutex<VecDeque<Connection<SENSOR_COUNT, Quat>>>>,
     streams: Vec<JoinHandle<()>>,
 }
 
-impl<const SENSOR_COUNT: usize, GYRO: Gyro + 'static> Streamer<SENSOR_COUNT, GYRO> {
+impl Streamer {
     pub fn new() -> Result<Self, Box<dyn Error>> {
         // load bytes from config
         let config = std::fs::read(CONFIG_PATH)?;

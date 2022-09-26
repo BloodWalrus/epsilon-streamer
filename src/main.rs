@@ -13,7 +13,7 @@ const SENSOR_COUNT: usize = 7;
 type GYRO = Mpu6050<I2cdev>;
 
 fn main() -> Result<(), Box<dyn Error>> {
-    Streamer::<SENSOR_COUNT, GYRO>::new()?.main()?;
+    Streamer::new()?.main()?;
 
     Ok(())
 }
