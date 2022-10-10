@@ -1,19 +1,21 @@
-use std::error::Error;
+use std::mem::size_of;
 
+use ecore::EpsilonResult;
+use glam::Quat;
 use linux_embedded_hal::I2cdev;
 use mpu6050::Mpu6050;
-use streamer::Streamer;
+use streamer::EpsilonStreamer;
 
 mod config;
-mod connection_listner;
 mod sensor;
 mod streamer;
 
 const SENSOR_COUNT: usize = 7;
-type GYRO = Mpu6050<I2cdev>;
+const QUAT_ARRAY_SIZE: usize = size_of::<[Quat; SENSOR_COUNT]>();
+type Gyro = Mpu6050<I2cdev>;
 
-fn main() -> Result<(), Box<dyn Error>> {
-    Streamer::new()?.main()?;
+fn main() -> EpsilonResult<()> {
+    EpsilonStreamer::new()?.run()?;
 
     Ok(())
 }

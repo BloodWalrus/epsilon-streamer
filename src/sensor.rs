@@ -15,7 +15,7 @@ use mpu6050::{Mpu6050, Mpu6050Builder};
 
 use crate::config::Device;
 
-use crate::GYRO;
+use crate::Gyro;
 
 pub trait FromDevice {
     fn from_device(device: Device) -> Result<Self, Box<dyn Error>>
@@ -40,23 +40,13 @@ impl FromDevice for Mpu6050<I2cdev> {
     }
 }
 
-pub trait Gyro: FromDevice + Send {
-    fn get_gyro(&mut self) -> Result<Vec3A, Box<dyn Error>>;
-}
-
-impl Gyro for Mpu6050<I2cdev> {
-    fn get_gyro(&mut self) -> Result<Vec3A, Box<dyn Error>> {
-        Ok(self.get_gyro()?)
-    }
-}
-
 // the sensors need a method communication to send shutdown signals or stop them from running when not in use
 // it is currently not an issue so will do later
 
 const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
 
 pub struct Sensor {
-    device: GYRO,
+    device: Gyro,
     output: Sender<Quat>,
     notifier: Receiver<()>,
     barrier: Arc<Barrier>,
@@ -65,7 +55,7 @@ pub struct Sensor {
 
 impl Sensor {
     pub fn new(
-        device: GYRO,
+        device: Gyro,
         output: Sender<Quat>,
         notifier: Receiver<()>,
         barrier: Arc<Barrier>,
@@ -110,11 +100,11 @@ pub struct SensorArray<const N: usize> {
     outputs: [Receiver<Quat>; N],
     notifiers: [Sender<()>; N],
     barrier: Arc<Barrier>,
-    _marker: PhantomData<GYRO>,
+    _marker: PhantomData<Gyro>,
 }
 
 impl<const N: usize> SensorArray<N> {
-    pub fn new(devices: [GYRO; N]) -> Self {
+    pub fn new(devices: [Gyro; N]) -> Self {
         // create empty arrays
         let mut sensors: [JoinHandle<()>; N] = unsafe { std::mem::zeroed() };
 
