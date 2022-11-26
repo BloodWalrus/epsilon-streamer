@@ -1,4 +1,5 @@
 use ecore::EpsilonResult;
+use glam::Vec3A;
 use serde::Deserialize;
 
 use std::{error::Error, fmt::Display, net::SocketAddr, time::Duration};
@@ -59,4 +60,5 @@ pub struct Config {
 pub struct Device {
     pub bus: u8,
     pub addr: u8,
+    pub offset: Vec3A,
 }

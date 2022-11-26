@@ -32,6 +32,7 @@ impl FromDevice for Mpu6050<I2cdev> {
         let mut mpu6050 = Mpu6050Builder::new()
             .i2c(I2cdev::new(format!("/dev/i2c-{}", device.bus))?)
             .slave_addr(device.addr)
+            .gyro_offset(device.offset)
             .build()?;
 
         mpu6050.init(&mut delay)?;
@@ -76,7 +77,7 @@ impl Sensor {
         loop {
             timer = Instant::now();
 
-            self.rotation += self.device.get_gyro().unwrap() * delta;
+            self.rotation += self.device.get_gyro().unwrap_or(Vec3A::ZERO) * delta;
 
             // if something can be read from notifier write rotation as quat into the output
             if let Ok(_) = self.notifier.try_recv() {
