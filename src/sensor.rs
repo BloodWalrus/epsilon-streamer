@@ -1,3 +1,4 @@
+use crate::ahrs::Ahrs;
 use std::{
     error::Error,
     marker::PhantomData,
@@ -43,6 +44,7 @@ impl FromDevice for Mpu6050<I2cdev> {
 // the sensors need a method communication to send shutdown signals or stop them from running when not in use
 // it is currently not an issue so will do later
 
+const SENSOR_FREQUENCY: f32 = 200.0;
 const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
 
 pub struct Sensor {
@@ -71,12 +73,16 @@ impl Sensor {
 
     pub fn calibrate(&mut self) {
         const SAMPLE_COUNT: usize = 1000;
-        let mut tmp = Vec3A::ZERO;
+        let mut tmp_gyro = Vec3A::ZERO;
+        let mut tmp_acc = Vec3A::ZERO;
         for _ in 0..SAMPLE_COUNT {
-            tmp += self.device.get_gyro().unwrap_or(Vec3A::ZERO);
+            tmp_gyro += self.device.get_gyro().unwrap_or(Vec3A::ZERO);
+            tmp_acc += self.device.get_acc().unwrap_or(Vec3A::ZERO);
         }
-        tmp = (1.0 / SAMPLE_COUNT as f32) * tmp;
-        self.device.gyro_offset = -tmp;
+        tmp_gyro = (1.0 / SAMPLE_COUNT as f32) * tmp_gyro;
+        tmp_acc = (1.0 / SAMPLE_COUNT as f32) * tmp_acc;
+        self.device.gyro_offset = -tmp_gyro;
+        self.device.acc_offset = -tmp_acc;
     }
 
     pub fn reset(&mut self) {
@@ -88,18 +94,23 @@ impl Sensor {
         let mut delta = 0.0;
         let round = |vec: Vec3A| (vec * 1000.0).round() / 1000.0;
         let mut timer;
+
+        let mut ahrs = Ahrs::new(SENSOR_FREQUENCY);
+
         loop {
             timer = Instant::now();
 
-            self.rotation += round(self.device.get_gyro().unwrap_or(Vec3A::ZERO)) * delta;
-
+            //self.rotation +=
+            //    round(self.device.get_gyro().unwrap_or(Vec3A::ZERO)) * SENSOR_FREQUENCY.recip();
+            ahrs.update_imu(
+                self.device.get_gyro().unwrap_or(Vec3A::ZERO),
+                self.device.get_acc().unwrap_or(Vec3A::ZERO),
+            );
 
             // if something can be read from notifier write rotation as quat into the output
             if let Ok(_) = self.notifier.try_recv() {
                 let rot = &self.rotation;
-                self.output
-                    .send(Quat::from_euler(XYZ, rot.x, rot.y, rot.z))
-                    .unwrap();
+                self.output.send(ahrs.rotation()).unwrap();
 
                 // wait for all sensor threads to synchronise
                 // this call should block for a short period of time
@@ -107,6 +118,9 @@ impl Sensor {
             }
 
             delta = timer.elapsed().as_secs_f32();
+            if SENSOR_FREQUENCY - delta > 0.0 {
+                std::thread::sleep(Duration::from_secs_f32(SENSOR_FREQUENCY - delta));
+            }
         }
     }
 }
