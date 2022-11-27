@@ -6,7 +6,6 @@ use linux_embedded_hal::I2cdev;
 use mpu6050::Mpu6050;
 use streamer::EpsilonStreamer;
 
-mod ahrs;
 mod config;
 mod sensor;
 mod streamer;
