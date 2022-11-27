@@ -102,7 +102,7 @@ impl EpsilonStreamer {
 
                 delta = timer.elapsed();
 
-                let tmp = self.frequency - delta;
+                let tmp = self.frequency.checked_sub(delta).unwrap_or(Duration::ZERO);
                 if tmp > Duration::ZERO {
                     thread::sleep(tmp);
                 }

@@ -60,5 +60,4 @@ pub struct Config {
 pub struct Device {
     pub bus: u8,
     pub addr: u8,
-    pub offset: Vec3A,
 }
