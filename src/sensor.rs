@@ -43,8 +43,6 @@ impl FromDevice for Mpu6050<I2cdev> {
 // the sensors need a method communication to send shutdown signals or stop them from running when not in use
 // it is currently not an issue so will do later
 
-const DEFAULT_SENSOR_ROTATION: Vec3A = Vec3A::ZERO;
-
 pub struct Sensor {
     device: Gyro,
     output: Sender<Quat>,
@@ -65,7 +63,7 @@ impl Sensor {
             output,
             notifier,
             barrier,
-            rotation: DEFAULT_SENSOR_ROTATION,
+            rotation: Vec3A::ZERO,
         }
     }
 
@@ -92,7 +90,6 @@ impl Sensor {
             timer = Instant::now();
 
             self.rotation += round(self.device.get_gyro().unwrap_or(Vec3A::ZERO)) * delta;
-
 
             // if something can be read from notifier write rotation as quat into the output
             if let Ok(_) = self.notifier.try_recv() {

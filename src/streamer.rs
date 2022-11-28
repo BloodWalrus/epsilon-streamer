@@ -3,14 +3,14 @@
 use crate::{
     config::{validate_config, Config, ConfigError},
     sensor::{FromDevice, SensorArray},
-    Gyro, QUAT_ARRAY_SIZE, SENSOR_COUNT,
+    Gyro, QUAT_ARRAY_SIZE,
 };
-use ecore::{connection::Streamer, EpsilonResult};
+use ecore::{connection::Streamer, constants::*, EpsilonResult};
 use glam::Quat;
 use std::{
     error::Error,
     fmt::Display,
-    thread::{self, Thread},
+    thread,
     time::{Duration, Instant},
 };
 
@@ -43,7 +43,7 @@ pub struct EpsilonStreamer {
 
 impl EpsilonStreamer {
     pub fn new() -> EpsilonResult<Self> {
-        let config_data = std::fs::read("./config.toml")?;
+        let config_data = std::fs::read(CONFIG_PATH)?;
         let config: Config = toml::from_slice(&config_data)?;
         // validate config should crash the program if no valid config is provided. this is system software not application software.
         // if what you give it isn't right it will not give you a real time prompt to correct it. !!! make sure the config is right !!!

@@ -1,5 +1,6 @@
 use std::mem::size_of;
 
+use ecore::constants::SENSOR_COUNT;
 use ecore::EpsilonResult;
 use glam::Quat;
 use linux_embedded_hal::I2cdev;
@@ -10,7 +11,6 @@ mod config;
 mod sensor;
 mod streamer;
 
-const SENSOR_COUNT: usize = 7;
 const QUAT_ARRAY_SIZE: usize = size_of::<[Quat; SENSOR_COUNT]>();
 type Gyro = Mpu6050<I2cdev>;
 
