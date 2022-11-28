@@ -47,6 +47,7 @@ impl EpsilonStreamer {
         let config: Config = toml::from_slice(&config_data)?;
         // validate config should crash the program if no valid config is provided. this is system software not application software.
         // if what you give it isn't right it will not give you a real time prompt to correct it. !!! make sure the config is right !!!
+        // don't complain that it crashes, it would be far more irritating if every time you misspelled the config it said "there is an error in the config please retype it to continue:"
         validate_config(&config)?;
         let streamer = Streamer::listen(&config.sockets[..])?;
         let mut devices_iter = config

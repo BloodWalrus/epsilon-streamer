@@ -52,7 +52,8 @@ pub fn validate_config(config: &Config) -> EpsilonResult<()> {
 #[derive(Deserialize)]
 pub struct Config {
     pub frequency: f64, // in secs
-    pub sockets: Vec<SocketAddr>,
+    pub server_data: SocketAddr,
+    pub server_ctrl: SocketAddr,
     pub devices: Vec<Device>,
 }
 
