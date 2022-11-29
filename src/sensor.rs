@@ -9,6 +9,7 @@ use std::{
     time::Instant,
 };
 
+use ecore::EpsilonResult;
 use glam::{EulerRot::XYZ, Quat, Vec3A};
 use linux_embedded_hal::{Delay, I2cdev};
 use mpu6050::{Mpu6050, Mpu6050Builder};
@@ -43,26 +44,29 @@ impl FromDevice for Mpu6050<I2cdev> {
 // the sensors need a method communication to send shutdown signals or stop them from running when not in use
 // it is currently not an issue so will do later
 
-pub struct Sensor {
+struct Sensor {
     device: Gyro,
     output: Sender<Quat>,
-    notifier: Receiver<()>,
+    messages: Receiver<Msg>,
     barrier: Arc<Barrier>,
     rotation: Vec3A,
+    starter: Arc<Barrier>,
 }
 
 impl Sensor {
     pub fn new(
         device: Gyro,
         output: Sender<Quat>,
-        notifier: Receiver<()>,
+        messages: Receiver<Msg>,
         barrier: Arc<Barrier>,
+        starter: Arc<Barrier>,
     ) -> Self {
         Self {
             device,
             output,
-            notifier,
+            messages,
             barrier,
+            starter,
             rotation: Vec3A::ZERO,
         }
     }
@@ -86,21 +90,38 @@ impl Sensor {
         let mut delta = 0.0;
         let round = |vec: Vec3A| (vec * 1000.0).round() / 1000.0;
         let mut timer;
+
+        self.starter.wait();
+
         loop {
             timer = Instant::now();
 
             self.rotation += round(self.device.get_gyro().unwrap_or(Vec3A::ZERO)) * delta;
 
-            // if something can be read from notifier write rotation as quat into the output
-            if let Ok(_) = self.notifier.try_recv() {
-                let rot = &self.rotation;
-                self.output
-                    .send(Quat::from_euler(XYZ, rot.x, rot.y, rot.z))
-                    .unwrap();
+            match self.messages.try_recv() {
+                Ok(msg) => match msg {
+                    Msg::Reset => {
+                        self.calibrate();
+                        self.reset();
+                        self.barrier.wait();
+                    }
+                    Msg::Read => {
+                        let rot = &self.rotation;
+                        self.output
+                            .send(Quat::from_euler(XYZ, rot.x, rot.y, rot.z))
+                            .unwrap();
 
-                // wait for all sensor threads to synchronise
-                // this call should block for a short period of time
-                self.barrier.wait();
+                        // wait for all sensor threads to synchronise
+                        // this call should block for a short period of time
+                        self.barrier.wait();
+                    }
+                },
+                Err(err) => match err {
+                    std::sync::mpsc::TryRecvError::Empty => (),
+                    std::sync::mpsc::TryRecvError::Disconnected => {
+                        panic!("message bus for sensor diconnect prematurely.")
+                    }
+                },
             }
 
             delta = timer.elapsed().as_secs_f32();
@@ -108,11 +129,18 @@ impl Sensor {
     }
 }
 
+#[repr(u8)]
+enum Msg {
+    Reset,
+    Read,
+}
+
 pub struct SensorArray<const N: usize> {
     sensors: [JoinHandle<()>; N],
     outputs: [Receiver<Quat>; N],
-    notifiers: [Sender<()>; N],
+    messages: [Sender<Msg>; N],
     barrier: Arc<Barrier>,
+    starter: Arc<Barrier>,
     _marker: PhantomData<Gyro>,
 }
 
@@ -122,17 +150,15 @@ impl<const N: usize> SensorArray<N> {
         let mut sensors: [JoinHandle<()>; N] = unsafe { std::mem::zeroed() };
 
         let mut outputs: [Receiver<Quat>; N] = unsafe { std::mem::zeroed() };
-        let mut notifiers: [Sender<()>; N] = unsafe { std::mem::zeroed() };
+        let mut messages: [Sender<Msg>; N] = unsafe { std::mem::zeroed() };
 
-        let mut tmp: [(Sender<Quat>, Receiver<()>); N] = unsafe { std::mem::zeroed() };
+        let mut tmp: [(Sender<Quat>, Receiver<Msg>); N] = unsafe { std::mem::zeroed() };
 
         // create barrier
         let barrier = Arc::new(Barrier::new(N + 1));
+        let starter = Arc::new(Barrier::new(N + 1));
 
         for i in 0..N {
-            // (output, outputs[i]) = channel();
-            // (notifiers[i], notifier) = channel();
-
             let (tmp0, tmp1) = channel();
             let output = tmp0;
             unsafe {
@@ -142,14 +168,12 @@ impl<const N: usize> SensorArray<N> {
             let (tmp0, tmp1) = channel();
             let notifier = tmp1;
             unsafe {
-                std::ptr::write(&mut notifiers[i] as *mut Sender<()>, tmp0);
+                std::ptr::write(&mut messages[i] as *mut Sender<Msg>, tmp0);
             }
-
-            // tmp[i] = (output, notifie(output, notifierr);
 
             unsafe {
                 std::ptr::write(
-                    &mut tmp[i] as *mut (Sender<Quat>, Receiver<()>),
+                    &mut tmp[i] as *mut (Sender<Quat>, Receiver<Msg>),
                     (output, notifier),
                 );
             }
@@ -160,19 +184,13 @@ impl<const N: usize> SensorArray<N> {
             .into_iter()
             .zip(tmp.into_iter())
             .map(|(device, io)| {
-                let (output, notifier) = io;
-                Sensor::new(device, output, notifier, barrier.clone())
+                let (output, messages) = io;
+                Sensor::new(device, output, messages, barrier.clone(), starter.clone())
             })
             .enumerate();
 
         // start sensors
         for (i, sensor) in devices {
-            // this unwrap call should never panic as the name should never contain null bytes
-            // sensors[i] = std::thread::Builder::new()
-            //     .name(format!("sensor {}", i))
-            //     .spawn(move || sensor.main())
-            //     .unwrap();
-
             unsafe {
                 std::ptr::write(
                     &mut sensors[i] as *mut JoinHandle<()>,
@@ -187,24 +205,39 @@ impl<const N: usize> SensorArray<N> {
         Self {
             sensors,
             outputs,
-            notifiers,
+            messages,
             barrier,
+            starter,
             _marker: PhantomData,
         }
     }
 
     // reads the sensors and returns their quaterion rotations
-    pub fn read(&self, dest: &mut [Quat; N]) {
-        for notifier in &self.notifiers {
-            notifier.send(()).unwrap();
+    pub fn read(&self, dest: &mut [Quat; N]) -> EpsilonResult<()> {
+        for messages in &self.messages {
+            messages.send(Msg::Read)?;
         }
 
         for (i, output) in self.outputs.iter().enumerate() {
-            dest[i] = output.recv().unwrap();
+            dest[i] = output.recv()?;
         }
 
         // synchronise all threads before continuing execution
         // this call should not block
         self.barrier.wait();
+        Ok(())
+    }
+
+    pub fn start(&self) {
+        self.starter.wait();
+    }
+
+    pub fn reset(&self) -> EpsilonResult<()> {
+        for messages in &self.messages {
+            messages.send(Msg::Reset)?;
+        }
+
+        self.barrier.wait();
+        Ok(())
     }
 }

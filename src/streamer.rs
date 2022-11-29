@@ -1,11 +1,14 @@
 // all this code needs cleaning up
-
 use crate::{
     config::{validate_config, Config, ConfigError},
     sensor::{FromDevice, SensorArray},
-    Gyro, QUAT_ARRAY_SIZE,
+    Gyro,
 };
-use ecore::{connection::Streamer, constants::*, EpsilonResult};
+use ecore::{
+    connection::{CtrlSignal, Stream},
+    constants::*,
+    EpsilonResult,
+};
 use glam::Quat;
 use std::{
     error::Error,
@@ -37,7 +40,7 @@ impl Error for StreamerError {}
 
 pub struct EpsilonStreamer {
     sensor_array: SensorArray<SENSOR_COUNT>,
-    streamer: Streamer<[Quat; SENSOR_COUNT], QUAT_ARRAY_SIZE>,
+    server: (Stream<[Quat; SENSOR_COUNT]>, Stream<CtrlSignal>),
     frequency: Duration, //measured in time per frame
 }
 
@@ -49,7 +52,11 @@ impl EpsilonStreamer {
         // if what you give it isn't right it will not give you a real time prompt to correct it. !!! make sure the config is right !!!
         // don't complain that it crashes, it would be far more irritating if every time you misspelled the config it said "there is an error in the config please retype it to continue:"
         validate_config(&config)?;
-        let streamer = Streamer::listen(&config.sockets[..])?;
+        let server = (
+            Stream::connect(config.server_data)?,
+            Stream::connect(config.server_ctrl)?,
+        );
+
         let mut devices_iter = config
             .devices
             .into_iter()
@@ -77,7 +84,7 @@ impl EpsilonStreamer {
 
         Ok(Self {
             sensor_array,
-            streamer,
+            server,
             frequency: Duration::from_secs_f64(config.frequency),
         })
     }
@@ -86,27 +93,32 @@ impl EpsilonStreamer {
         let mut delta = Duration::ZERO;
         let mut tmp = [Quat::IDENTITY; SENSOR_COUNT];
 
-        'client: loop {
-            if let Err(err) = self.streamer.next_client() {
-                eprintln!("{}", err);
-                continue 'client;
+        loop {
+            if let Some(ctrl) = self.server.1.try_recv()? {
+                match ctrl {
+                    CtrlSignal::Start => {
+                        self.sensor_array.start();
+                    }
+                    // close program returning no error
+                    CtrlSignal::Stop => {
+                        break Ok(());
+                    }
+                    CtrlSignal::Reset => {
+                        self.sensor_array.reset()?;
+                    }
+                }
             }
 
-            'stream: loop {
-                let timer = Instant::now();
-                self.sensor_array.read(&mut tmp);
+            let timer = Instant::now();
+            self.sensor_array.read(&mut tmp)?;
 
-                if let Err(err) = self.streamer.send(tmp.clone()) {
-                    eprintln!("{}", err);
-                    continue 'client;
-                }
+            self.server.0.send(&tmp)?;
 
-                delta = timer.elapsed();
+            delta = timer.elapsed();
 
-                let tmp = self.frequency.checked_sub(delta).unwrap_or(Duration::ZERO);
-                if tmp > Duration::ZERO {
-                    thread::sleep(tmp);
-                }
+            let tmp = self.frequency.checked_sub(delta).unwrap_or(Duration::ZERO);
+            if tmp > Duration::ZERO {
+                thread::sleep(tmp);
             }
         }
     }
