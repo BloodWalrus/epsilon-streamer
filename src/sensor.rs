@@ -73,6 +73,7 @@ impl Sensor {
 
     pub fn calibrate(&mut self) {
         const SAMPLE_COUNT: usize = 1000;
+        self.device.gyro_offset = Vec3A::ZERO;
         let mut tmp = Vec3A::ZERO;
         for _ in 0..SAMPLE_COUNT {
             tmp += self.device.get_gyro().unwrap_or(Vec3A::ZERO);
@@ -86,13 +87,12 @@ impl Sensor {
     }
 
     pub fn main(mut self) {
-        self.calibrate();
         let mut delta = 0.0;
-        let round = |vec: Vec3A| (vec * 1000.0).round() / 1000.0;
+        let round = |vec: Vec3A| (vec * 100.0).round() / 100.0;
         let mut timer;
 
         self.starter.wait();
-
+        self.calibrate();
         loop {
             timer = Instant::now();
 
@@ -101,12 +101,14 @@ impl Sensor {
             match self.messages.try_recv() {
                 Ok(msg) => match msg {
                     Msg::Reset => {
+                        delta = 0.0;
                         self.calibrate();
                         self.reset();
                         self.barrier.wait();
+                        continue;
                     }
                     Msg::Read => {
-                        let rot = &self.rotation;
+                        let rot = round(self.rotation);
                         self.output
                             .send(Quat::from_euler(XYZ, rot.x, rot.y, rot.z))
                             .unwrap();

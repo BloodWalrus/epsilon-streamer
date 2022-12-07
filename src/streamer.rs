@@ -93,6 +93,13 @@ impl EpsilonStreamer {
         let mut delta = Duration::ZERO;
         let mut tmp = [Quat::IDENTITY; SENSOR_COUNT];
 
+        while match self.server.1.recv()? 
+        {
+            CtrlSignal::Start => false,
+            _ => true,
+        } {}
+        self.sensor_array.start(); 
+
         loop {
             if let Some(ctrl) = self.server.1.try_recv()? {
                 match ctrl {
